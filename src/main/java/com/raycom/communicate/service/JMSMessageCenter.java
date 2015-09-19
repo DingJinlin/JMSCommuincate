@@ -22,8 +22,9 @@ public class JMSMessageCenter {
     private JMSClient jmsClient;
     int businessSessionTimeOut;
     int processorPoolSize;
-    private BusinessJMSSenderAndReceiverProcessor businessJMSProcessor;
+    private BusinessJMSSenderAndReceiverProcessor requesterBusinessJMSProcessor;
     private Map<String, BusinessJMSReceiverProcessor> receiverJMSProcessorCache;
+
     public JMSMessageCenter(String url, String user, String password, int processorPoolSize, int replayTimeout) {
         // TODO: 去除JMSBase中的定时清除生产者MAP,加入手功清除函数
         jmsClient = JMSClient.getInstance(url, user, password, 10000);
@@ -31,7 +32,7 @@ public class JMSMessageCenter {
         this.processorPoolSize = processorPoolSize;
         businessSessionTimeOut = replayTimeout;
 
-        businessJMSProcessor = new BusinessJMSSenderAndReceiverProcessor(this, businessSessionTimeOut);
+        requesterBusinessJMSProcessor = new BusinessJMSSenderAndReceiverProcessor(this, businessSessionTimeOut);
         receiverJMSProcessorCache = new ConcurrentHashMap<String, BusinessJMSReceiverProcessor>();
     }
 
@@ -57,8 +58,13 @@ public class JMSMessageCenter {
     }
 
     public void sentAndReceive(String receiverQueueName, BaseServiceCommunicateBusinessHandler handler, String destQueueName, byte[] msg) throws JMSException {
-        businessJMSProcessor.addBusinessHandler(new String(handler.getBusinessID()), handler);
-        jmsClient.addQueueProcessor(receiverQueueName, businessJMSProcessor, processorPoolSize);
+        String handleKey = new String(handler.getBusinessID());
+        // 用于接收方,可能同一BusinessID会有多个申请
+        if (handler.getMessageID() != 0) {
+            handleKey = handleKey + handler.getMessageID();
+        }
+        requesterBusinessJMSProcessor.addBusinessHandler(handleKey, handler);
+        jmsClient.addQueueProcessor(receiverQueueName, requesterBusinessJMSProcessor, processorPoolSize);
 
         jmsClient.sendData(destQueueName, msg);
         LOG.trace("JMS sent data- destAddress: " + destQueueName + ", responseAddress:" + receiverQueueName + ", data: " + HexCodec.byte2String(msg));
@@ -66,6 +72,7 @@ public class JMSMessageCenter {
 
     class BusinessJMSReceiverProcessor extends BaseJMSProcessor<byte[]> {
         IBaseServiceCommunicateBusinessHandlerFactory handlerFactory;
+
         public BusinessJMSReceiverProcessor(JMSMessageCenter jmsMessageCenter, IBaseServiceCommunicateBusinessHandlerFactory handlerFactory, int timeout) {
             super(jmsMessageCenter, timeout);
             this.handlerFactory = handlerFactory;
@@ -83,7 +90,7 @@ public class JMSMessageCenter {
                 int messageID = communicateMsg.getMessageID();
                 String handleKey = businessID + messageID;
                 BaseServiceCommunicateBusinessHandler businessHandler = businessHandlerCache.get(handleKey);
-                if(businessHandler == null) {
+                if (businessHandler == null) {
                     businessHandler = handlerFactory.createHandler();
                     businessHandler.setJmsMessageCenter(jmsMessageCenter);
                     businessHandlerCache.put(handleKey, businessHandler);
@@ -139,7 +146,9 @@ public class JMSMessageCenter {
                 String businessID = new String(communicateMsg.getBusinessID().toByteArray());
                 String log = "received from " + name + ",s " + msgType.name() + " message, response address: " + responseAddress;
                 LOG.info(log);
-                BaseServiceCommunicateBusinessHandler businessHandler = businessHandlerCache.get(businessID);
+                String handlerKey = businessID;
+                BaseServiceCommunicateBusinessHandler businessHandler;
+                businessHandler = businessHandlerCache.get(handlerKey);
                 if (businessHandler != null) {
                     switch (msgType) {
                         case RESPONSE: {
@@ -163,10 +172,25 @@ public class JMSMessageCenter {
                             break;
                     }
                 } else {
-                    LOG.info("Not found business request Handler by business id: " + businessID);
+                    handlerKey = handlerKey + communicateMsg.getMessageID();
+                    businessHandler = businessHandlerCache.get(handlerKey);
+                    if (businessHandler != null) {
+                        switch (msgType) {
+                            case CANCEL_REQUEST: {
+                                businessHandler.onCancelRequest(communicateMsg.getName(), communicateMsg);
+                                break;
+                            }
+                            case CONFIRM_REQUEST: {
+                                businessHandler.onConfirmRequest(communicateMsg.getName(), communicateMsg);
+                                break;
+                            }
+                            default:
+                                LOG.info("Message type not support, messageType: " + msgType.name());
+                                break;
+                        }
+                        LOG.info("Not found business request Handler by business id: " + businessID);
+                    }
                 }
-
-
             } catch (InvalidProtocolBufferException e) {
                 LOG.error(e.getMessage(), e);
             }
