@@ -1,0 +1,43 @@
+package com.raycom.comm.proto.service;
+    
+option java_package = "com.raycom.comm.proto.service";
+option java_outer_classname = "ServiceCommunicate";
+
+/**
+ * 内部服务通信协议
+ * V 2
+ */
+
+message ServiceCommunicateMsg {
+    enum MessageType {
+        REQUEST = 0;                                // 业务申请
+        RESPONSE = 1;                               // 业务回复
+        SUBMIT_REQUEST = 2;                         // 业务预提交申请
+        SUBMIT_RESPONSE = 3;                        // 业务预提交回复
+        CONFIRM_REQUEST = 4;                        // 业务确认提交申请
+        CONFIRM_RESPONSE = 5;                       // 业务确认提交回复
+        CANCEL_REQUEST = 6;                         // 业务取消提交申请
+        CANCEL_RESPONSE = 7;                        // 业务取消提交回复
+        NOTIFICATION = 8;                           // 通知业务,无须回复
+    }
+
+    message Result {
+        enum ResultCode {
+            SUCCESS = 0;                            // 成功
+            FAIL = 1;                               // 失败
+            SYSTEM_INNER_ERROR = 2;                 // 系统内部错误
+        }
+
+        optional ResultCode resultCode = 1;         // 结果码
+        optional string errorComment = 2;           // 错误说明，仅在resultCode != SUCCESS里包含     
+    }
+
+    optional int32 version = 1 [default = 2];       // 协议版本
+    optional MessageType messageType = 2;           // 消息类型
+    optional bytes businessID = 3;                  // 业务ID，唯一
+    optional int32 messageID = 4;                   // 消息ID，同一businessID内唯一
+    optional string name = 5;                       // 发送者名字
+    optional bytes content = 6;                     // 协议内容
+    optional string responseAddress = 7;            // 回复地址，仅在REQUEST中包含
+    optional Result result = 8;                     // 回复结果，仅在RESPONSE中包含
+}
