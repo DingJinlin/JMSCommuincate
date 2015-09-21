@@ -1,9 +1,9 @@
+*.iml
 out/
 *.class
 classes/
 gen/
 proguard.cfg
-*.iml
 *.bak
 .idea/
 local.properties
