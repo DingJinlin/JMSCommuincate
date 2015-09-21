@@ -475,7 +475,7 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
      * @throws JMSException
      */
     public void sentNotificate(String destAddress, String serverName, byte[] data) throws JMSException {
-        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.NOTIFICATION, "", destAddress, new byte[0], 0, null, data);
+        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.NOTIFICATION, serverName, "", new byte[0], 0, null, data);
         jmsMessageCenter.sentMessage(destAddress, communicateMsgData);
     }
 
