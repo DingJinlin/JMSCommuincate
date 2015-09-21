@@ -29,7 +29,8 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
     protected String notificationCommandType;
     protected Map<String, String> businessIDCommandTypeCache = new ConcurrentHashMap<String, String>();
     protected Map<Integer, String> msgIDCommandTypeCache = new ConcurrentHashMap<Integer, String>();
-    boolean SubmitResult = true;
+    protected boolean SubmitResult = true;
+    protected String SubmitErrorComment = "";
 
     protected String serviceName;
     protected String serviceID;
@@ -248,19 +249,20 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
     public void onSubmitResponse(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
         ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode result = msg.getResult().getResultCode();
         String sourceAddress = new String(msg.getResponseAddress().getBytes());
-
         int msgID = msg.getMessageID();
+        String commandType = msgIDCommandTypeCache.get(msgID);
+        submitResponseCountCatch.remove(msgID);
+
         if (result != ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode.SUCCESS) {
             String log = "ON_SUBMIT_RESPONSE----  source address " + sourceAddress;
-            String commandType = msgIDCommandTypeCache.get(msgID);
             if (commandType != null) {
                 log += ", command Type: " + commandType + ", commnet: " + msg.getResult().getErrorComment();
             }
-            LOG.info(log);
+            LOG.error(log);
             SubmitResult &= false;
+            SubmitErrorComment = msg.getResult().getErrorComment();
         } else {
             String log = "ON_SUBMIT_ERROR_RESPONSE----  source address " + sourceAddress;
-            String commandType = msgIDCommandTypeCache.get(msgID);
             if (commandType != null) {
                 log += ", command Type: " + commandType;
             }
@@ -269,7 +271,6 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
                 destAddressCache.put(msgID, msg.getName());
             }
             responseDataCatch.put(msgID, msg);
-            submitResponseCountCatch.remove(msgID);
         }
 
         if (submitResponseCountCatch.isEmpty()) {
@@ -365,7 +366,7 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
             List<String> originalServiceAddress = new ArrayList<String>();
             List<ServiceCommunicate.ServiceCommunicateMsg> responseDatas = new ArrayList<ServiceCommunicate.ServiceCommunicateMsg>();
 
-            for(int responseMsgID: responseDataCatch.keySet()) {
+            for (int responseMsgID : responseDataCatch.keySet()) {
                 originalServiceAddress.add(originalServerNameCache.get(responseMsgID));
                 responseDatas.add(responseDataCatch.get(responseMsgID));
             }
