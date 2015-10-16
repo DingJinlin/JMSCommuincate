@@ -77,11 +77,11 @@ http://www.w3.org/2001/XMLSchema-instance ">
     <distributionManagement>
         <repository>
             <id>nexus-rc-releases</id>
-            <url>http://192.168.4.41:8000/nexus/content/repositories/releases/</url>
+            <url>http://192.168.2.41:8000/nexus/content/repositories/releases/</url>
         </repository>
         <snapshotRepository>
             <id>nexus-rc-snapshots</id>
-            <url>http://192.168.4.41:8000/nexus/content/repositories/snapshots/</url>
+            <url>http://192.168.2.41:8000/nexus/content/repositories/snapshots/</url>
         </snapshotRepository>
     </distributionManagement>
 
