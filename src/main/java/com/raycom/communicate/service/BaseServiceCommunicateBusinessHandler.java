@@ -180,6 +180,7 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         try {
             for (Map.Entry<Integer, byte[]> entry : submitDataCache.entrySet()) {
                 int msgID = entry.getKey();
+                String destServiceName = originalServerNameCache.get(msgID);
                 String destAddress = destAddressCache.get(msgID);
                 byte[] data = entry.getValue();
 
@@ -190,7 +191,7 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
                 }
                 LOG.info(log);
 
-                sentBusinessRequest(RequestBusinessType.SUBMIT_REQUEST, destAddress, this.serviceName, businessID.getBytes(), msgID, data);
+                sentBusinessRequest(RequestBusinessType.SUBMIT_REQUEST, destServiceName, destAddress, this.serviceName, businessID.getBytes(), msgID, data);
                 submitDataCache.remove(msgID);
             }
         } catch (JMSException e) {
@@ -294,6 +295,7 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         try {
             for (Map.Entry<Object, String> entry : destAddressCache.entrySet()) {
                 int msgID = (Integer) entry.getKey();
+                String destServiceName = originalServerNameCache.get(msgID);
                 String destAddress = entry.getValue();
                 String log = "SUBMIT_CONFIRM_REQUEST----  dest address: " + destAddress;
                 String commandType = msgIDCommandTypeCache.get(msgID);
@@ -302,7 +304,7 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
                 }
                 LOG.info(log);
 
-                sentBusinessRequest(RequestBusinessType.CONFIRM_REQUEST, destAddress, this.serviceName, businessID.getBytes(), msgID, null);
+                sentBusinessRequest(RequestBusinessType.CONFIRM_REQUEST, destServiceName, destAddress, this.serviceName, businessID.getBytes(), msgID, null);
                 responseResultCountCatch.put(msgID, msgID);
                 submitDataCache.remove(msgID);
             }
@@ -380,8 +382,9 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         try {
             for (Map.Entry<Object, String> entry : destAddressCache.entrySet()) {
                 int msgID = (Integer) entry.getKey();
+                String destServiceName = originalServerNameCache.get(msgID);
                 String destAddress = destAddressCache.get(msgID);
-                sentBusinessRequest(RequestBusinessType.CANCEL_REQUEST, destAddress, serviceName, businessID.getBytes(), msgID, null);
+                sentBusinessRequest(RequestBusinessType.CANCEL_REQUEST, destServiceName, destAddress, serviceName, businessID.getBytes(), msgID, null);
                 responseResultCountCatch.put(msgID, msgID);
                 submitDataCache.remove(msgID);
             }
@@ -557,8 +560,8 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
      * @param data
      * @throws JMSException
      */
-    public void sentBusinessRequest(RequestBusinessType businessType, String destAddress, String serviceName, byte[] businessID, Integer msgID, byte[] data) throws JMSException {
-        String responseAddress = destAddress + "To" + this.serviceName + serviceID;
+    public void sentBusinessRequest(RequestBusinessType businessType, String destServiceName, String destAddress, String serviceName, byte[] businessID, Integer msgID, byte[] data) throws JMSException {
+        String responseAddress = destServiceName + "To" + this.serviceName + serviceID;
         ServiceCommunicate.ServiceCommunicateMsg.MessageType msgType = convertRequestBusinessType(businessType);
         byte[] communicateMsgData = createCommunicateMessageData(msgType, serviceName, responseAddress, businessID, msgID, null, data);
         jmsMessageCenter.sentAndReceive(responseAddress, this, destAddress, communicateMsgData);

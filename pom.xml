@@ -7,7 +7,7 @@ http://www.w3.org/2001/XMLSchema-instance ">
 
     <groupId>com.raycom</groupId>
     <artifactId>ServiceCommunicate</artifactId>
-    <version>2.0.0.1-SNAPSHOT</version>
+    <version>2.0.0.2-SNAPSHOT</version>
     <name>Service communicate lib</name>
     <packaging>jar</packaging>
 
@@ -77,11 +77,11 @@ http://www.w3.org/2001/XMLSchema-instance ">
     <distributionManagement>
         <repository>
             <id>nexus-rc-releases</id>
-            <url>http://192.168.2.41:8000/nexus/content/repositories/releases/</url>
+            <url>http://118.122.92.222:7772/nexus/content/repositories/releases/</url>
         </repository>
         <snapshotRepository>
             <id>nexus-rc-snapshots</id>
-            <url>http://192.168.2.41:8000/nexus/content/repositories/snapshots/</url>
+            <url>http://118.122.92.222:7772/nexus/content/repositories/snapshots/</url>
         </snapshotRepository>
     </distributionManagement>
 
