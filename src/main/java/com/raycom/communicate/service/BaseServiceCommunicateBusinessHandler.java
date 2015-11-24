@@ -1,5 +1,6 @@
 package com.raycom.communicate.service;
 
+import backtype.storm.utils.RotatingMap;
 import com.google.protobuf.ByteString;
 import com.raycom.comm.proto.service.ServiceCommunicate;
 import org.slf4j.Logger;
@@ -10,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -19,16 +19,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INFO> implements IServiceCommunicateBusinessHandler<ServiceCommunicate.ServiceCommunicateMsg, byte[]> {
     Logger LOG = LoggerFactory.getLogger(BaseServiceCommunicateBusinessHandler.class);
-    protected Map<Integer, String> originalServerNameCache = new ConcurrentHashMap<Integer, String>();
-    protected Map<Object, String> destAddressCache = new ConcurrentHashMap<Object, String>();
-    protected Map<Integer, byte[]> submitDataCache = new ConcurrentHashMap<Integer, byte[]>();
-    protected Map<Integer, Object> submitResponseCountCatch = new ConcurrentHashMap<Integer, Object>();
-    protected Map<Integer, ServiceCommunicate.ServiceCommunicateMsg> responseDataCatch = new ConcurrentHashMap<Integer, ServiceCommunicate.ServiceCommunicateMsg>();
-    protected Map<Integer, Object> responseResultCountCatch = new ConcurrentHashMap<Integer, Object>();
+    private static final int MAP_TIMEOUT = 600;
+    protected RotatingMap<Integer, String> originalServerNameCache = new RotatingMap<Integer, String>(MAP_TIMEOUT);
+    protected RotatingMap<Object, String> destAddressCache = new RotatingMap<Object, String>(MAP_TIMEOUT);
+    protected RotatingMap<Integer, byte[]> submitDataCache = new RotatingMap<Integer, byte[]>(MAP_TIMEOUT);
+    protected RotatingMap<Integer, Object> submitResponseCountCatch = new RotatingMap<Integer, Object>(MAP_TIMEOUT);
+    protected RotatingMap<Integer, ServiceCommunicate.ServiceCommunicateMsg> responseDataCatch = new RotatingMap<Integer, ServiceCommunicate.ServiceCommunicateMsg>(MAP_TIMEOUT);
+    protected RotatingMap<Integer, Object> responseResultCountCatch = new RotatingMap<Integer, Object>(MAP_TIMEOUT);
 
     protected String notificationCommandType;
-    protected Map<String, String> businessIDCommandTypeCache = new ConcurrentHashMap<String, String>();
-    protected Map<Integer, String> msgIDCommandTypeCache = new ConcurrentHashMap<Integer, String>();
+    protected RotatingMap<String, String> businessIDCommandTypeCache = new RotatingMap<String, String>(MAP_TIMEOUT);
+    protected RotatingMap<Integer, String> msgIDCommandTypeCache = new RotatingMap<Integer, String>(MAP_TIMEOUT);
     protected boolean SubmitResult = true;
     protected String SubmitErrorComment = "";
 
