@@ -18,36 +18,36 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
     Logger LOG = LoggerFactory.getLogger(BaseServiceCommunicateBusinessHandler.class);
     private static final int MAP_TIMEOUT = 600;
 
-    private static class BusinessInfo {
-        String businessID;
+    protected static class BusinessInfo {
+        public String businessID;
 
         // businessID/msgID, command type
-        Map<Object, String> commandTypeCache = new HashMap<Object, String>();
+        public Map<Object, String> commandTypeCache = new HashMap<Object, String>();
 
         // msgID, dest service name
-        Map<Integer, String> originalServerNameCache = new HashMap<Integer, String>();
+        public Map<Integer, String> originalServerNameCache = new HashMap<Integer, String>();
 
         // businessID/msgID, dest service address
-        Map<Object, String> destAddressCache = new HashMap<Object, String>();
+        public Map<Object, String> destAddressCache = new HashMap<Object, String>();
 
         // msgID, submit data
-        Map<Integer, byte[]> submitDataCache = new HashMap<Integer, byte[]>();
+        public Map<Integer, byte[]> submitDataCache = new HashMap<Integer, byte[]>();
 
         // msgID
-        Set<Integer> submitResponseCount = new HashSet<Integer>();
+        public Set<Integer> submitResponseCount = new HashSet<Integer>();
 
         // msgID, msg
-        Map<Integer, ServiceCommunicate.ServiceCommunicateMsg> responseDataCatch = new HashMap<Integer, ServiceCommunicate.ServiceCommunicateMsg>(MAP_TIMEOUT);
+        public Map<Integer, ServiceCommunicate.ServiceCommunicateMsg> responseDataCatch = new HashMap<Integer, ServiceCommunicate.ServiceCommunicateMsg>(MAP_TIMEOUT);
 
         // msgID
-        Set<Integer> responseCount = new HashSet<Integer>();
+        public Set<Integer> responseCount = new HashSet<Integer>();
 
-        BusinessInfo(String businessID) {
+        public BusinessInfo(String businessID) {
             this.businessID = businessID;
         }
     }
 
-    static RotatingMap<String, BusinessInfo> BusinessInfoCache = new RotatingMap<String, BusinessInfo>(MAP_TIMEOUT);
+    protected static RotatingMap<String, BusinessInfo> BusinessInfoCache = new RotatingMap<String, BusinessInfo>(MAP_TIMEOUT);
 
     protected String notificationCommandType;
 
