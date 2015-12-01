@@ -27,7 +27,7 @@ public class JMSMessageCenter {
 
     public JMSMessageCenter(String url, String user, String password, int processorPoolSize, int replayTimeout) {
         // TODO: 去除JMSBase中的定时清除生产者MAP,加入手功清除函数
-        jmsClient = JMSClient.getInstance(url, user, password, 10000);
+        jmsClient = JMSClient.getInstance(url, user, password);
         jmsClient.start();
         this.processorPoolSize = processorPoolSize;
         businessSessionTimeOut = replayTimeout;
