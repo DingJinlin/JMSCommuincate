@@ -1,6 +1,7 @@
 package com.raycom.communicate.service;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  *
@@ -18,22 +19,41 @@ public interface IServiceCommunicateBusinessHandler<REQUEST_DATA, RESPONSE_DATA>
     void addSubmitRequest(int msgID, String destAddress, RESPONSE_DATA data);
     void submitSubmitRequest();
     void onSubmitRequest(String serviceName, REQUEST_DATA data);
-    void submitResponse(RESPONSE_DATA data);
-    void submitErrorResponse(String errMsg);
+    void submitResponse(int msgID, RESPONSE_DATA data);
+    void submitErrorResponse(int msgID, String errMsg);
     void onSubmitResponse(String serviceName, REQUEST_DATA data);
-    void submitComplete();
+
+    /**
+     * 业务申请与响应端提交回复完成
+     */
+    void submitComplete(UUID businessID);
 
     void submitConfirmRequest();
     void onConfirmRequest(String serviceName, REQUEST_DATA data);
-    void confirmResponse();
-    void confirmErrorResponse(String errMsg);
+    void confirmResponse(int msgID);
+    void confirmErrorResponse(int msgID, String errMsg);
     void onConfirmResponse(String serviceName, REQUEST_DATA data);
-    void confirmComplete(List<String> sourceAddress, List<REQUEST_DATA> datas);
+
+    /**
+     * 业务申请端确认回复完成
+     * @param sourceAddress 源地址
+     * @param datas 数据
+     */
+    void confirmComplete(UUID businessID, List<String> sourceAddress, List<REQUEST_DATA> datas);
+
+    /**
+     * 业务响应端确认回复完成
+     */
+    void confirmComplete(UUID businessID);
 
     void submitCancelRequest();
     void onCancelRequest(String serviceName, REQUEST_DATA data);
-    void cancelResponse();
-    void cancelErrorResponse(String errMsg);
+    void cancelResponse(int msgID);
+    void cancelErrorResponse(int msgID, String errMsg);
     void onCancelResponse(String serviceName, REQUEST_DATA data);
-    void cancelComplete();
+
+    /**
+     * 业务申请与响应端取消回复完成
+     */
+    void cancelComplete(UUID businessID);
 }

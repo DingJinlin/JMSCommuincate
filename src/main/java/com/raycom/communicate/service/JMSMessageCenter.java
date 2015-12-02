@@ -59,10 +59,6 @@ public class JMSMessageCenter {
 
     public void sentAndReceive(String receiverQueueName, BaseServiceCommunicateBusinessHandler handler, String destQueueName, byte[] msg) throws JMSException {
         String handleKey = new String(handler.getBusinessID());
-        // 用于接收方,可能同一BusinessID会有多个申请
-        if (handler.getMessageID() != 0) {
-            handleKey = handleKey + handler.getMessageID();
-        }
         requesterBusinessJMSProcessor.addBusinessHandler(handleKey, handler);
         jmsClient.addQueueProcessor(receiverQueueName, requesterBusinessJMSProcessor, processorPoolSize);
 

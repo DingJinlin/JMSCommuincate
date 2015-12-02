@@ -1,12 +1,15 @@
 package com.raycom.communicate.service;
 
-import backtype.storm.utils.RotatingMap;
 import com.google.protobuf.ByteString;
 import com.raycom.comm.proto.service.ServiceCommunicate;
+import com.raycom.support.convert.IntegerConvert;
+import com.raycom.util.codec.HexCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.jms.JMSException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -19,19 +22,19 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
     private static final int MAP_TIMEOUT = 600;
 
     protected static class BusinessInfo {
-        public String businessID;
+        public UUID businessID;
 
-        // businessID/msgID, command type
-        public Map<Object, String> commandTypeCache = new HashMap<Object, String>();
+        // msgID, command type
+        public Map<Integer, String> commandTypeCache = new HashMap<Integer, String>();
 
-        // msgID, dest service name
-        public Map<Integer, String> originalServerNameCache = new HashMap<Integer, String>();
+        // msgID, opposite service name
+        public Map<Integer, String> oppositeServerNameCache = new HashMap<Integer, String>();
 
-        // businessID/msgID, dest service address
-        public Map<Object, String> destAddressCache = new HashMap<Object, String>();
+        // msgID, dest service address
+        public Map<Integer, String> destAddressCache = new HashMap<Integer, String>();
 
         // msgID, submit data
-        public Map<Integer, byte[]> submitDataCache = new HashMap<Integer, byte[]>();
+        public Map<Integer, byte[]> sentDataCache = new HashMap<Integer, byte[]>();
 
         // msgID
         public Set<Integer> submitResponseCount = new HashSet<Integer>();
@@ -42,26 +45,17 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         // msgID
         public Set<Integer> responseCount = new HashSet<Integer>();
 
-        public BusinessInfo(String businessID) {
+        public BusinessInfo(UUID businessID) {
             this.businessID = businessID;
         }
     }
 
-    protected static RotatingMap<String, BusinessInfo> BusinessInfoCache = new RotatingMap<String, BusinessInfo>(MAP_TIMEOUT);
-
-    protected String notificationCommandType;
-
-    protected boolean SubmitResult = true;
-    protected String SubmitErrorComment = "";
-
     protected String serviceName;
     protected String serviceID;
-    protected String sourceServiceName;
-    protected String businessID;
-    protected int messageID;
-
     private AtomicInteger messageIDAtomic;
+    protected BusinessInfo businessInfo;
 
+    private boolean SubmitResult = false;
     protected UP_LEVEL_SESSION_INFO UpLevelSessionInfo;
     protected JMSMessageCenter jmsMessageCenter;
 
@@ -86,11 +80,7 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
     }
 
     public byte[] getBusinessID() {
-        return businessID.getBytes();
-    }
-
-    public int getMessageID() {
-        return messageID;
+        return uuid2bytes(businessInfo.businessID);
     }
 
     public BaseServiceCommunicateBusinessHandler(String serviceName, String serviceID) {
@@ -100,108 +90,117 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
     }
 
     public void notification(String destAddress, byte[] data, String commandType) {
-        notificationCommandType = commandType;
+        int msgID = 1;
+        businessInfo = new BusinessInfo(UUID.randomUUID());
+        businessInfo.commandTypeCache.put(msgID, commandType);
+
+        notification(destAddress, data);
     }
 
     @Override
     public void notification(String destAddress, byte[] data) {
+        int msgID = 1;
+        if(businessInfo == null) {
+            businessInfo = new BusinessInfo(UUID.randomUUID());
+        }
+
+        businessInfo.oppositeServerNameCache.put(msgID, destAddress);
+        businessInfo.destAddressCache.put(msgID, destAddress);
+        businessInfo.sentDataCache.put(msgID, data);
+
+        String log = "NOTIFICATION----  dest address: " + destAddress;
+        String commandType = businessInfo.commandTypeCache.get(msgID);
+        if (commandType != null) {
+            log += ", command Type: " + commandType;
+        }
+        LOG.info(log);
+
         try {
-            String log = "NOTIFICATION----  dest address: " + destAddress;
-            if (notificationCommandType != null) {
-                log += ", command Type: " + notificationCommandType;
-            }
-            LOG.info(log);
-            sentNotificate(destAddress, serviceName, data);
+            sentNotification();
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
             // TODO: 回复数据发送失败
         }
     }
 
-    public void request(String destAddress, byte[] data, String commandType) {
-        businessID = UUID.randomUUID().toString();
-        BusinessInfo businessInfo = new BusinessInfo(businessID);
-        businessInfo.commandTypeCache.put(businessID, commandType);
+    @Override
+    public void onNotification(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
+        if(businessInfo == null) {
+            UUID businessID = bytes2uuid(msg.getBusinessID().toByteArray());
+            businessInfo = new BusinessInfo(businessID);
+        }
+        int msgID = msg.getMessageID();
+        businessInfo.destAddressCache.put(msgID, msg.getResponseAddress());
+        businessInfo.oppositeServerNameCache.put(msgID, msg.getName());
+        LOG.info("ON_Notification----  source Service " + msg.getName());
+    }
 
-        BusinessInfoCache.put(businessID, businessInfo);
+    public void request(String destAddress, byte[] data, String commandType) {
+        int msgID = 1;
+        businessInfo.commandTypeCache.put(msgID, commandType);
 
         request(destAddress, data);
     }
 
     @Override
     public void request(String destAddress, byte[] data) {
-        BusinessInfo businessInfo;
-        if (businessID == null) {
-            businessID = UUID.randomUUID().toString();
-            businessInfo = new BusinessInfo(businessID);
-            BusinessInfoCache.put(businessID, businessInfo);
-        } else {
-            businessInfo = BusinessInfoCache.get(businessID);
-            if(businessInfo == null) {
-                LOG.warn("Not found business by id: " + businessID);
-                return;
-            }
+        int msgID = 1;
+        if(businessInfo == null) {
+            businessInfo = new BusinessInfo(UUID.randomUUID());
         }
 
+        businessInfo.oppositeServerNameCache.put(msgID, destAddress);
+        businessInfo.destAddressCache.put(msgID, destAddress);
+        businessInfo.sentDataCache.put(msgID, data);
+
+        String log = "REQUEST----  service " + destAddress;
+        String commandType = businessInfo.commandTypeCache.get(msgID);
+        if (commandType != null) {
+            log += ", command Type: " + commandType;
+        }
+        LOG.info(log);
+
         try {
-            String log = "REQUEST----  service " + destAddress;
-            String businessType = businessInfo.commandTypeCache.get(businessID);
-            if (businessType != null) {
-                log += ", command Type: " + businessType;
-            }
-            LOG.info(log);
-            sentRequest(destAddress, serviceName, businessID.getBytes(), data);
+            sentRequest();
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
             // TODO: 回复数据发送失败
         }
     }
 
-
     @Override
     public void onRequest(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
-        this.sourceServiceName = serviceName;
-        businessID = new String(msg.getBusinessID().toByteArray());
-        BusinessInfo businessInfo = new BusinessInfo(businessID);
-        BusinessInfoCache.put(businessID, businessInfo);
-
-
-        String sourceAddress = new String(msg.getResponseAddress().getBytes());
-        LOG.info("ON_REQUEST----  source address " + sourceAddress);
-
-        businessInfo.destAddressCache.put(businessID, msg.getResponseAddress());
+        if(businessInfo == null) {
+            UUID businessID = bytes2uuid(msg.getBusinessID().toByteArray());
+            businessInfo = new BusinessInfo(businessID);
+        }
+        int msgID = msg.getMessageID();
+        businessInfo.destAddressCache.put(msgID, msg.getResponseAddress());
+        businessInfo.oppositeServerNameCache.put(msgID, msg.getName());
+        LOG.info("ON_REQUEST----  source Service " + msg.getName());
     }
 
     public void response(byte[] data, String commandType) {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
-
-        businessInfo.commandTypeCache.put(businessID, commandType);
+        int msgID = 1;
+        businessInfo.commandTypeCache.put(msgID, commandType);
         response(data);
     }
 
     @Override
     public void response(byte[] data) {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
+        int msgID = 1;
+        String destAddress = businessInfo.destAddressCache.get(msgID);
+        businessInfo.sentDataCache.put(msgID, data);
+
+        String log = "RESPONSE----  dest address: " + destAddress;
+        String commandType = businessInfo.commandTypeCache.get(msgID);
+        if (commandType != null) {
+            log += ", command Type: " + commandType;
         }
+        LOG.info(log);
 
-        String destAddress = businessInfo.destAddressCache.get(businessID);
         try {
-            String log = "RESPONSE----  dest address: " + destAddress;
-            String commandType = businessInfo.commandTypeCache.get(businessID);
-
-            if (commandType != null) {
-                log += ", command Type: " + commandType;
-            }
-            LOG.info(log);
-            sentResponse(destAddress, this.serviceName, businessID.getBytes(), data);
-            BusinessInfoCache.remove(businessID);
+            sentResponse();
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
         }
@@ -209,53 +208,37 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
 
     @Override
     public void onResponse(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
-        String businessID = new String(msg.getBusinessID().toByteArray());
-        BusinessInfoCache.remove(businessID);
+        int msgID = msg.getMessageID();
+        businessInfo.responseDataCatch.put(msgID, msg);
     }
 
     public void addSubmitRequest(String destAddress, byte[] data, String commandType) {
-        businessID = UUID.randomUUID().toString();
-        BusinessInfo businessInfo = new BusinessInfo(businessID);
-        BusinessInfoCache.put(businessID, businessInfo);
-
         int msgID = messageIDAtomic.incrementAndGet();
         businessInfo.commandTypeCache.put(msgID, commandType);
         addSubmitRequest(msgID, destAddress, data);
     }
 
     @Override
-    public void addSubmitRequest(int msgID, String destAddress, byte[] data) {
-        BusinessInfo businessInfo;
-        if (businessID == null) {
-            businessID = UUID.randomUUID().toString();
-            businessInfo = new BusinessInfo(businessID);
-            BusinessInfoCache.put(businessID, businessInfo);
-        } else {
-            businessInfo = BusinessInfoCache.get(businessID);
-            if(businessInfo == null) {
-                LOG.warn("Not found business by id: " + businessID);
-                return;
-            }
+    public void addSubmitRequest(int MsgID, String destAddress, byte[] data) {
+        int msgID = MsgID;
+        if(msgID < 1) {
+            msgID = messageIDAtomic.incrementAndGet();
         }
 
-        businessInfo.originalServerNameCache.put(msgID, destAddress);
+        businessInfo.oppositeServerNameCache.put(msgID, destAddress);
         businessInfo.destAddressCache.put(msgID, destAddress);
-        businessInfo.submitDataCache.put(msgID, data);
+        businessInfo.sentDataCache.put(msgID, data);
         businessInfo.submitResponseCount.add(msgID);
     }
 
     @Override
     public void submitSubmitRequest() {
-        try {
-            BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-            if(businessInfo == null) {
-                LOG.warn("Not found business by id: " + businessID);
-                return;
-            }
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
 
-            for (Map.Entry<Integer, byte[]> entry : businessInfo.submitDataCache.entrySet()) {
+        try {
+            for (Map.Entry<Integer, byte[]> entry : businessInfo.sentDataCache.entrySet()) {
                 int msgID = entry.getKey();
-                String destServiceName = businessInfo.originalServerNameCache.get(msgID);
+                String destServiceName = businessInfo.oppositeServerNameCache.get(msgID);
                 String destAddress = businessInfo.destAddressCache.get(msgID);
                 byte[] data = entry.getValue();
 
@@ -266,8 +249,8 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
                 }
                 LOG.info(log);
 
-                sentBusinessRequest(RequestBusinessType.SUBMIT_REQUEST, destServiceName, destAddress, this.serviceName, businessID.getBytes(), msgID, data);
-                businessInfo.submitDataCache.remove(msgID);
+                sentBusinessRequest(RequestBusinessType.SUBMIT_REQUEST, destServiceName, destAddress, this.serviceName, bBusinessID, msgID, data);
+                businessInfo.sentDataCache.remove(msgID);
             }
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
@@ -277,61 +260,55 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
 
     @Override
     public void onSubmitRequest(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
-        this.sourceServiceName = serviceName;
-        this.businessID = new String(msg.getBusinessID().toByteArray());
-        this.messageID = msg.getMessageID();
+        int msgID = msg.getMessageID();
+        businessInfo.oppositeServerNameCache.put(msgID, msg.getName());
+        businessInfo.responseDataCatch.put(msgID, msg);
+        businessInfo.destAddressCache.put(msgID, msg.getResponseAddress());
+        businessInfo.submitResponseCount.add(msgID);
 
-        String sourceAddress = new String(msg.getResponseAddress().getBytes());
-        LOG.info("ON_SUBMIT_REQUEST----  source address " + sourceAddress);
-
-        BusinessInfo businessInfo = new BusinessInfo(businessID);
-        BusinessInfoCache.put(businessID, businessInfo);
-        businessInfo.destAddressCache.put(messageID, msg.getResponseAddress());
-
-        businessInfo.submitResponseCount.add(messageID);
+        LOG.info("ON_SUBMIT_REQUEST----  source service name " + msg.getName());
     }
 
     @Override
-    public void submitResponse(byte[] data) {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
+    public void submitResponse(int msgID, byte[] data) {
+        businessInfo.sentDataCache.put(msgID, data);
+
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
+        String sourceServiceName = businessInfo.oppositeServerNameCache.get(msgID);
+
+        String log = "SUBMIT_REQUEST----  dest address: " + destAddress;
+        String commandType = businessInfo.commandTypeCache.get(msgID);
+        if (commandType != null) {
+            log += ", command Type: " + commandType;
         }
-
-        String destAddress = businessInfo.destAddressCache.get(messageID);
+        LOG.info(log);
         try {
-            String log = "SUBMIT_REQUEST----  dest address: " + destAddress;
-            String commandType = businessInfo.commandTypeCache.get(messageID);
-            if (commandType != null) {
-                log += ", command Type: " + commandType;
-            }
-            LOG.info(log);
-
-            sentBusinessResponse(ResponseBusinessType.SUBMIT_RESPONSE, sourceServiceName, destAddress, this.serviceName, businessID.getBytes(), messageID, data);
+            sentBusinessResponse(ResponseBusinessType.SUBMIT_RESPONSE, sourceServiceName, destAddress, this.serviceName, bBusinessID, msgID, data);
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
         }
+
+        businessInfo.submitResponseCount.remove(msgID);
+        if(businessInfo.submitResponseCount.isEmpty()) {
+            submitComplete(businessInfo.businessID);
+        }
     }
 
     @Override
-    public void submitErrorResponse(String errMsg) {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
+    public void submitErrorResponse(int msgID, String errMsg) {
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
+
+        String log = "SUBMIT_ERROR_REQUEST----  dest address: " + destAddress;
+        String commandType = businessInfo.commandTypeCache.get(msgID);
+        if (commandType != null) {
+            log += ", command Type: " + commandType;
         }
+        LOG.info(log);
 
-        String destAddress = businessInfo.destAddressCache.get(messageID);
         try {
-            String log = "SUBMIT_ERROR_REQUEST----  dest address: " + destAddress;
-            String commandType = businessInfo.commandTypeCache.get(messageID);
-            if (commandType != null) {
-                log += ", command Type: " + commandType;
-            }
-            LOG.info(log);
-
-            sentBusinessErrorResponse(ResponseBusinessType.SUBMIT_RESPONSE, destAddress, this.serviceName, businessID.getBytes(), messageID, errMsg);
+            sentBusinessErrorResponse(ResponseBusinessType.SUBMIT_RESPONSE, destAddress, this.serviceName, bBusinessID, msgID, errMsg);
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
         }
@@ -339,30 +316,23 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
 
     @Override
     public void onSubmitResponse(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
-        ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode result = msg.getResult().getResultCode();
-        String sourceAddress = new String(msg.getResponseAddress().getBytes());
-        String businessID = new String(msg.getBusinessID().toByteArray());
         int msgID = msg.getMessageID();
-
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
-
-        String commandType = businessInfo.commandTypeCache.get(msgID);
+        businessInfo.oppositeServerNameCache.put(msgID, msg.getName());
+        businessInfo.destAddressCache.put(msgID, msg.getResponseAddress());
         businessInfo.submitResponseCount.remove(msgID);
 
+        ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode result = msg.getResult().getResultCode();
+        String commandType = businessInfo.commandTypeCache.get(msgID);
+
         if (result != ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode.SUCCESS) {
-            String log = "ON_SUBMIT_RESPONSE----  source address " + sourceAddress;
+            String log = "ON_SUBMIT_ERROR_RESPONSE----  source service name " + msg.getName();
             if (commandType != null) {
-                log += ", command Type: " + commandType + ", commnet: " + msg.getResult().getErrorComment();
+                log += ", command Type: " + commandType + ", comment: " + msg.getResult().getErrorComment();
             }
             LOG.error(log);
             SubmitResult &= false;
-            SubmitErrorComment = msg.getResult().getErrorComment();
         } else {
-            String log = "ON_SUBMIT_ERROR_RESPONSE----  source address " + sourceAddress;
+            String log = "ON_SUBMIT_RESPONSE----  source service name " + msg.getName();
             if (commandType != null) {
                 log += ", command Type: " + commandType;
             }
@@ -374,12 +344,12 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         }
 
         if (businessInfo.submitResponseCount.isEmpty()) {
-            submitComplete();
+            submitComplete(businessInfo.businessID);
         }
     }
 
     @Override
-    public void submitComplete() {
+    public void submitComplete(UUID businessID) {
         if (SubmitResult) {
             LOG.debug("ON_SUBMIT_COMPLETE---- SUCCESS");
             submitConfirmRequest();
@@ -391,16 +361,11 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
 
     @Override
     public void submitConfirmRequest() {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
-
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
         try {
-            for (Map.Entry<Object, String> entry : businessInfo.destAddressCache.entrySet()) {
-                int msgID = (Integer) entry.getKey();
-                String destServiceName = businessInfo.originalServerNameCache.get(msgID);
+            for (Map.Entry<Integer, String> entry : businessInfo.destAddressCache.entrySet()) {
+                int msgID = entry.getKey();
+                String destServiceName = businessInfo.oppositeServerNameCache.get(msgID);
                 String destAddress = entry.getValue();
                 String log = "SUBMIT_CONFIRM_REQUEST----  dest address: " + destAddress;
                 String commandType = businessInfo.commandTypeCache.get(msgID);
@@ -409,9 +374,9 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
                 }
                 LOG.info(log);
 
-                sentBusinessRequest(RequestBusinessType.CONFIRM_REQUEST, destServiceName, destAddress, this.serviceName, businessID.getBytes(), msgID, null);
+                sentBusinessRequest(RequestBusinessType.CONFIRM_REQUEST, destServiceName, destAddress, this.serviceName, bBusinessID, msgID, null);
                 businessInfo.responseCount.add(msgID);
-                businessInfo.submitDataCache.remove(msgID);
+                businessInfo.sentDataCache.remove(msgID);
             }
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
@@ -421,82 +386,60 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
 
     @Override
     public void onConfirmRequest(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
-        businessID = new String(msg.getBusinessID().toByteArray());
-        messageID = msg.getMessageID();
-        String sourceAddress = new String(msg.getResponseAddress().getBytes());
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
+        int msgID = msg.getMessageID();
+        businessInfo.oppositeServerNameCache.put(msgID, msg.getName());
+        businessInfo.destAddressCache.put(msgID, msg.getResponseAddress());
 
-        String log = "ON_CONFIRM_REQUEST----  source address " + sourceAddress;
-        String commandType = businessInfo.commandTypeCache.get(messageID);
+        String log = "ON_CONFIRM_REQUEST----  source service name " + msg.getName();
+        String commandType = businessInfo.commandTypeCache.get(msgID);
         if (commandType != null) {
             log += ", command Type: " + commandType;
         }
         LOG.info(log);
 
-        businessInfo.destAddressCache.put(messageID, msg.getResponseAddress());
-        businessInfo.submitResponseCount.remove(messageID);
+        businessInfo.responseCount.add(msgID);
     }
 
     @Override
-    public void confirmResponse() {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
-
-        String destAddress = businessInfo.destAddressCache.get(messageID);
+    public void confirmResponse(int msgID) {
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
         try {
             LOG.debug("CONFIRM_RESPONSE----  dest address: " + destAddress);
-            sentBusinessResponse(ResponseBusinessType.CONFIRM_RESPONSE, sourceServiceName, destAddress, this.serviceName, businessID.getBytes(), messageID, null);
+            sentBusinessResponse(ResponseBusinessType.CONFIRM_RESPONSE, destAddress, this.serviceName, bBusinessID, msgID);
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
         }
+        businessInfo.responseCount.remove(msgID);
 
-        if(businessInfo.submitResponseCount.isEmpty()) {
-            BusinessInfoCache.remove(businessID);
+        if (businessInfo.responseCount.isEmpty()) {
+            confirmComplete(businessInfo.businessID);
         }
     }
 
     @Override
-    public void confirmErrorResponse(String errMsg) {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
-
-        String destAddress = businessInfo.destAddressCache.get(messageID);
+    public void confirmErrorResponse(int msgID, String errMsg) {
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
         try {
             LOG.debug("CONFIRM_ERROR_RESPONSE---- des: " + destAddress);
-            sentBusinessErrorResponse(ResponseBusinessType.CONFIRM_RESPONSE, destAddress, this.serviceName, businessID.getBytes(), messageID, errMsg);
+            sentBusinessErrorResponse(ResponseBusinessType.CONFIRM_RESPONSE, destAddress, this.serviceName, bBusinessID, msgID, errMsg);
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
         }
-
-        if(businessInfo.submitResponseCount.isEmpty()) {
-            BusinessInfoCache.remove(businessID);
+        businessInfo.responseCount.remove(msgID);
+        if (businessInfo.responseCount.isEmpty()) {
+           cancelComplete(businessInfo.businessID);
         }
     }
 
     @Override
     public void onConfirmResponse(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
-        String businessID = new String(msg.getBusinessID().toByteArray());
         int msgID = msg.getMessageID();
+        businessInfo.oppositeServerNameCache.put(msgID, msg.getName());
 
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
 
-        String sourceAddress = new String(msg.getResponseAddress().getBytes());
-
-        String log = "ON_CONFIRM_RESPONSE----  source address " + sourceAddress;
+        String log = "ON_CONFIRM_RESPONSE----  source service name " + msg.getName();
         String commandType = businessInfo.commandTypeCache.get(msgID);
         if (commandType != null) {
             log += ", command Type: " + commandType;
@@ -504,41 +447,34 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         LOG.info(log);
 
         ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode result = msg.getResult().getResultCode();
+        if(result == ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode.SUCCESS) {
+
+        }
         businessInfo.responseCount.remove(msgID);
         if (businessInfo.responseCount.isEmpty()) {
             List<String> originalServiceAddress = new ArrayList<String>();
             List<ServiceCommunicate.ServiceCommunicateMsg> responseDatas = new ArrayList<ServiceCommunicate.ServiceCommunicateMsg>();
 
             for (int responseMsgID : businessInfo.responseDataCatch.keySet()) {
-                originalServiceAddress.add(businessInfo.originalServerNameCache.get(responseMsgID));
+                originalServiceAddress.add(businessInfo.oppositeServerNameCache.get(responseMsgID));
                 responseDatas.add(businessInfo.responseDataCatch.get(responseMsgID));
             }
-            confirmComplete(originalServiceAddress, responseDatas);
+            confirmComplete(businessInfo.businessID, originalServiceAddress, responseDatas);
         }
 
-    }
-
-    @Override
-    public void confirmComplete(List<String> sourceAddress, List<ServiceCommunicate.ServiceCommunicateMsg> serviceCommunicateMsgs) {
-        BusinessInfoCache.remove(businessID);
     }
 
     @Override
     public void submitCancelRequest() {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
-
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
         try {
-            for (Map.Entry<Object, String> entry : businessInfo.destAddressCache.entrySet()) {
-                int msgID = (Integer) entry.getKey();
-                String destServiceName = businessInfo.originalServerNameCache.get(msgID);
+            for (Map.Entry<Integer, String> entry : businessInfo.destAddressCache.entrySet()) {
+                int msgID = entry.getKey();
+                String destServiceName = businessInfo.oppositeServerNameCache.get(msgID);
                 String destAddress = businessInfo.destAddressCache.get(msgID);
-                sentBusinessRequest(RequestBusinessType.CANCEL_REQUEST, destServiceName, destAddress, serviceName, businessID.getBytes(), msgID, null);
+                sentBusinessRequest(RequestBusinessType.CANCEL_REQUEST, destServiceName, destAddress, serviceName, bBusinessID, msgID, null);
                 businessInfo.responseCount.add(msgID);
-                businessInfo.submitDataCache.remove(msgID);
+                businessInfo.sentDataCache.remove(msgID);
             }
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
@@ -548,65 +484,54 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
 
     @Override
     public void onCancelRequest(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
-        String businessID = new String(msg.getBusinessID().toByteArray());
-        messageID = msg.getMessageID();
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
+        int msgID = msg.getMessageID();
+        businessInfo.oppositeServerNameCache.put(msgID, msg.getName());
+        businessInfo.destAddressCache.put(msgID, msg.getResponseAddress());
+        businessInfo.responseCount.add(msgID);
 
-        LOG.info("CANCEL_REQUEST----  service " + msg.getName());
-        businessInfo.destAddressCache.put(messageID, msg.getResponseAddress());
-        businessInfo.submitResponseCount.remove(messageID);
+        LOG.info("CANCEL_REQUEST----  service name" + msg.getName());
     }
 
     @Override
-    public void cancelResponse() {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
+    public void cancelResponse(int msgID) {
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
 
-        String destAddress = businessInfo.destAddressCache.get(messageID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
         try {
-            sentBusinessResponse(ResponseBusinessType.CANCEL_RESPONSE, sourceServiceName, destAddress, serviceName, businessID.getBytes(), messageID, null);
+            sentBusinessResponse(ResponseBusinessType.CANCEL_RESPONSE, destAddress, serviceName, bBusinessID, msgID);
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
         }
+        businessInfo.responseCount.remove(msgID);
 
-        if(businessInfo.submitResponseCount.isEmpty()) {
-            BusinessInfoCache.remove(businessID);
+        if (businessInfo.responseCount.isEmpty()) {
+            cancelComplete(businessInfo.businessID);
         }
     }
 
     @Override
-    public void cancelErrorResponse(String errMsg) {
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
+    public void cancelErrorResponse(int msgID, String errMsg) {
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
 
-        String destAddress = businessInfo.destAddressCache.get(messageID);
         try {
-            sentBusinessErrorResponse(ResponseBusinessType.CANCEL_RESPONSE, destAddress, serviceName, businessID.getBytes(), messageID, errMsg);
+            sentBusinessErrorResponse(ResponseBusinessType.CANCEL_RESPONSE, destAddress, serviceName, bBusinessID, msgID, errMsg);
         } catch (JMSException e) {
             LOG.error(e.getMessage(), e);
+        }
+        businessInfo.responseCount.remove(msgID);
+
+        if (businessInfo.responseCount.isEmpty()) {
+            cancelComplete(businessInfo.businessID);
         }
     }
 
     @Override
     public void onCancelResponse(String serviceName, ServiceCommunicate.ServiceCommunicateMsg msg) {
-        String businessID = new String(msg.getBusinessID().toByteArray());
         int msgID = msg.getMessageID();
+        businessInfo.oppositeServerNameCache.put(msgID, msg.getName());
 
-        BusinessInfo businessInfo = BusinessInfoCache.get(businessID);
-        if(businessInfo == null) {
-            LOG.warn("Not found business by id: " + businessID);
-            return;
-        }
+
         String commandType = businessInfo.commandTypeCache.get(msgID);
         LOG.info("CANCEL_RESPONSE----  service " + msg.getName() + " response success, command type: " + commandType);
 
@@ -614,13 +539,8 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         businessInfo.responseCount.remove(msgID);
 
         if (businessInfo.responseCount.isEmpty()) {
-            cancelComplete();
+            cancelComplete(businessInfo.businessID);
         }
-    }
-
-    @Override
-    public void cancelComplete() {
-        BusinessInfoCache.remove(businessID);
     }
 
     /**
@@ -646,10 +566,16 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         }
 
         serviceMsgBuild.setName(serviceName);
-        serviceMsgBuild.setResponseAddress(responseAddress);
+        if(responseAddress != null) {
+            serviceMsgBuild.setResponseAddress(responseAddress);
+        }
 
         if (result != null) {
             serviceMsgBuild.setResult(result);
+        } else {
+            ServiceCommunicate.ServiceCommunicateMsg.Result.Builder resultBuilder = ServiceCommunicate.ServiceCommunicateMsg.Result.getDefaultInstance().toBuilder();
+            resultBuilder.setResultCode(ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode.SUCCESS);
+            serviceMsgBuild.setResult(resultBuilder);
         }
 
         if (data != null) {
@@ -660,59 +586,68 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
     }
 
     /**
-     * @param destAddress
-     * @param data
+     * 发送通知
+     *
      * @throws JMSException
      */
-    public void sentNotificate(String destAddress, String serverName, byte[] data) throws JMSException {
-        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.NOTIFICATION, serverName, "", new byte[0], 0, null, data);
+    public void sentNotification() throws JMSException {
+        int msgID = 1;
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
+        byte[] data = businessInfo.sentDataCache.get(msgID);
+
+
+        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.NOTIFICATION, serviceName, "", bBusinessID, msgID, null, data);
         jmsMessageCenter.sentMessage(destAddress, communicateMsgData);
     }
 
     /**
-     * 发送申请数据.REQUEST
+     * 发送申请数据
      *
-     * @param destAddress
-     * @param serviceName
-     * @param businessID
-     * @param data
      * @throws JMSException
      */
-    public void sentRequest(String destAddress, String serviceName, byte[] businessID, byte[] data) throws JMSException {
+    public void sentRequest() throws JMSException {
+        int msgID = 1;
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
+        byte[] data = businessInfo.sentDataCache.get(msgID);
+
         String responseAddress = destAddress + "To" + this.serviceName + serviceID;
-        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.REQUEST, serviceName, responseAddress, businessID, null, null, data);
+        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.REQUEST, serviceName, responseAddress, bBusinessID, msgID, null, data);
         jmsMessageCenter.sentAndReceive(responseAddress, this, destAddress, communicateMsgData);
     }
 
     /**
      * 发送回复消息 RESPONSE
      *
-     * @param destAddress
-     * @param serviceName
-     * @param businessID
-     * @param data
      * @throws JMSException
      */
-    public void sentResponse(String destAddress, String serviceName, byte[] businessID, byte[] data) throws JMSException {
-        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.RESPONSE, serviceName, destAddress, businessID, 0, null, data);
+    public void sentResponse() throws JMSException {
+        int msgID = 1;
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
+        byte[] data = businessInfo.sentDataCache.get(msgID);
+
+        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.RESPONSE, serviceName, destAddress, bBusinessID, msgID, null, data);
         jmsMessageCenter.sentMessage(destAddress, communicateMsgData);
     }
 
     /**
      * 发送错误回复 ERROR RESPONSE
      *
-     * @param serviceName
-     * @param destAddress
-     * @param businessID
      * @param errComment
      * @throws JMSException
      */
-    public void sentErrorResponse(String destAddress, String serviceName, byte[] businessID, String errComment) throws JMSException {
+    public void sentErrorResponse(String errComment) throws JMSException {
+        int msgID = 1;
+        byte[] bBusinessID = uuid2bytes(businessInfo.businessID);
+        String destAddress = businessInfo.destAddressCache.get(msgID);
+
         ServiceCommunicate.ServiceCommunicateMsg.Result.Builder resultBuilder = ServiceCommunicate.ServiceCommunicateMsg.Result.getDefaultInstance().toBuilder();
         resultBuilder.setResultCode(ServiceCommunicate.ServiceCommunicateMsg.Result.ResultCode.FAIL);
         resultBuilder.setErrorComment(errComment);
 
-        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.RESPONSE, serviceName, destAddress, businessID, null, resultBuilder.build(), null);
+        byte[] communicateMsgData = createCommunicateMessageData(ServiceCommunicate.ServiceCommunicateMsg.MessageType.RESPONSE, serviceName, destAddress, bBusinessID, msgID, resultBuilder.build(), null);
         jmsMessageCenter.sentMessage(destAddress, communicateMsgData);
     }
 
@@ -755,14 +690,15 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
     }
 
     /**
-     * 发送业务回复 SUBMIT_RESPONSE/CONFIRM_RESPONSE/CANCEL_RESPONSE
+     * 发送业务回复 SUBMIT_RESPONSE
      *
-     * @param businessType
-     * @param destAddress
-     * @param serviceName
-     * @param businessID
-     * @param msgID
-     * @param data
+     * @param businessType      业务类型
+     * @param destServiceName   目的服务名
+     * @param destAddress       目的地址
+     * @param serviceName       本地服务名
+     * @param businessID        业务ID
+     * @param msgID             消息ID
+     * @param data              发送数据
      * @throws JMSException
      */
     public void sentBusinessResponse(ResponseBusinessType businessType, String destServiceName, String destAddress, String serviceName, byte[] businessID, Integer msgID, byte[] data) throws JMSException {
@@ -770,6 +706,21 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         ServiceCommunicate.ServiceCommunicateMsg.MessageType msgType = convertResponseBusinessType(businessType);
         byte[] communicateMsgData = createCommunicateMessageData(msgType, serviceName, responseAddress, businessID, msgID, null, data);
         jmsMessageCenter.sentAndReceive(responseAddress, this, destAddress, communicateMsgData);
+    }
+
+    /**
+     * 发送业务回复 CONFIRM_RESPONSE/CANCEL_RESPONSE
+     * @param businessType      业务类型
+     * @param destAddress       目的地址
+     * @param serviceName       本地服务名
+     * @param businessID        业务ID
+     * @param msgID             消息ID
+     * @throws JMSException
+     */
+    public void sentBusinessResponse(ResponseBusinessType businessType, String destAddress, String serviceName, byte[] businessID, Integer msgID) throws JMSException {
+        ServiceCommunicate.ServiceCommunicateMsg.MessageType msgType = convertResponseBusinessType(businessType);
+        byte[] communicateMsgData = createCommunicateMessageData(msgType, serviceName, null, businessID, msgID, null, null);
+        jmsMessageCenter.sentMessage(destAddress, communicateMsgData);
     }
 
     /**
@@ -791,5 +742,26 @@ public abstract class BaseServiceCommunicateBusinessHandler<UP_LEVEL_SESSION_INF
         ServiceCommunicate.ServiceCommunicateMsg.MessageType msgType = convertResponseBusinessType(businessType);
         byte[] communicateMsgData = createCommunicateMessageData(msgType, serviceName, destAddress, businessID, msgID, resultBuilder.build(), null);
         jmsMessageCenter.sentMessage(destAddress, communicateMsgData);
+    }
+
+    public byte[] uuid2bytes(UUID uuid) {
+        long msb = uuid.getMostSignificantBits();
+        long lsb = uuid.getLeastSignificantBits();
+
+        ByteBuffer byteBuffer = ByteBuffer.allocate(16);
+        byteBuffer.put(IntegerConvert.long2bytes(ByteOrder.BIG_ENDIAN, msb));
+        byteBuffer.put(IntegerConvert.long2bytes(ByteOrder.BIG_ENDIAN, lsb));
+
+        return byteBuffer.array();
+    }
+
+    public UUID bytes2uuid(byte[] bUuid) {
+        ByteBuffer byteBuffer = ByteBuffer.wrap(bUuid);
+        byteBuffer.order(ByteOrder.BIG_ENDIAN);
+
+        long msb = byteBuffer.getLong();
+        long lsb = byteBuffer.getLong();
+
+        return new UUID(msb, lsb);
     }
 }
